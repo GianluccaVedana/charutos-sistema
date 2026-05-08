@@ -1,0 +1,5 @@
+run = "cd src && python seed.py 2>/dev/null; uvicorn main:app --host 0.0.0.0 --port 8080"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
