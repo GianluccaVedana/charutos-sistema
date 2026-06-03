@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 
 const MENU_ITEMS = [
   { path: '/', label: 'Dashboard', icon: '📊', perfis: ['admin', 'financeiro', 'vendas', 'estoque'] },
-  { path: '/produtos', label: 'Produtos', icon: '🚬', perfis: ['admin', 'estoque'] },
+  { path: '/produtos', label: 'Produtos', icon: '📦', perfis: ['admin', 'estoque'] },
   { path: '/clientes', label: 'Clientes', icon: '👥', perfis: ['admin', 'vendas'] },
   { path: '/estoque', label: 'Estoque', icon: '📦', perfis: ['admin', 'estoque'] },
   { path: '/consignacoes', label: 'Consignações', icon: '📋', perfis: ['admin', 'vendas'] },
@@ -34,7 +34,7 @@ export default function Sidebar({ open, onClose }) {
         fixed lg:relative z-30 h-full
       `}>
         <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-100 min-w-[256px]">
-          <span className="text-2xl">🚬</span>
+          <span className="text-2xl">🏆</span>
           <div>
             <p className="font-bold text-gray-900 text-sm leading-tight">Charutos</p>
             <p className="text-charuto-600 text-xs font-medium">Premium</p>

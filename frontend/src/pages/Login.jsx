@@ -33,7 +33,9 @@ export default function Login() {
 
       <div className="relative w-full max-w-md">
         <div className="text-center mb-8">
-          <span className="text-6xl">🚬</span>
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-white/20 rounded-2xl backdrop-blur-sm">
+              <span className="text-4xl">🏆</span>
+            </div>
           <h1 className="text-3xl font-bold text-white mt-3">Charutos Premium</h1>
           <p className="text-charuto-200 mt-1">Sistema de Gestão</p>
         </div>

@@ -98,7 +98,7 @@ export default function Produtos() {
         <img src={v ? `${BASE_URL}/uploads/${v}` : r.link_imagem} alt=""
           className="w-8 h-8 rounded object-cover border border-gray-200" />
       ) : (
-        <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-base">🚬</div>
+        <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-base">📦</div>
       ),
     },
     { key: 'sku', label: 'SKU', width: 90 },

@@ -78,7 +78,7 @@ export default function Portal() {
       <div className="bg-gradient-to-r from-amber-800 to-amber-600 text-white">
         <div className="max-w-3xl mx-auto px-4 py-6">
           <div className="flex items-center gap-3 mb-1">
-            <span className="text-3xl">🚬</span>
+            <span className="text-3xl">🏆</span>
             <div>
               <p className="text-sm text-amber-200 font-medium">Portal do Consignado</p>
               <h1 className="text-xl font-bold">{cliente.nome}</h1>
@@ -130,7 +130,7 @@ export default function Portal() {
                         className="w-24 h-24 object-cover flex-shrink-0"
                       />
                     ) : (
-                      <div className="w-24 h-24 bg-amber-50 flex items-center justify-center flex-shrink-0 text-3xl">🚬</div>
+                      <div className="w-24 h-24 bg-amber-50 flex items-center justify-center flex-shrink-0 text-3xl">🏆</div>
                     )}
                     <div className="flex-1 p-4">
                       <div className="flex items-start justify-between gap-2">
