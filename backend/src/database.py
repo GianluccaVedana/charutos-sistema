@@ -23,6 +23,24 @@ def get_db():
     return conn
 
 
+def _migrate(conn):
+    """Adiciona novas colunas sem quebrar dados existentes."""
+    migrations = [
+        "ALTER TABLE produtos ADD COLUMN tipo_charuto TEXT",
+        "ALTER TABLE produtos ADD COLUMN vitola TEXT",
+        "ALTER TABLE produtos ADD COLUMN intensidade TEXT",
+        "ALTER TABLE produtos ADD COLUMN foto_filename TEXT",
+        "ALTER TABLE clientes ADD COLUMN portal_token TEXT",
+        "ALTER TABLE consignacoes ADD COLUMN remessa_id INTEGER",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
+    conn.commit()
+
+
 def init_db():
     conn = get_db()
     cur = conn.cursor()
@@ -53,6 +71,10 @@ def init_db():
         estoque_minimo INTEGER DEFAULT 0,
         observacoes TEXT,
         link_imagem TEXT,
+        tipo_charuto TEXT,
+        vitola TEXT,
+        intensidade TEXT,
+        foto_filename TEXT,
         criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
         atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -70,6 +92,7 @@ def init_db():
         estado TEXT,
         cep TEXT,
         observacoes TEXT,
+        portal_token TEXT,
         criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -90,6 +113,15 @@ def init_db():
         quantidade REAL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS remessas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo TEXT UNIQUE,
+        cliente_id INTEGER NOT NULL,
+        data_envio DATE NOT NULL,
+        observacoes TEXT,
+        criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS consignacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         codigo TEXT UNIQUE,
@@ -103,6 +135,7 @@ def init_db():
         qtd_devolvida REAL DEFAULT 0,
         data_fechamento DATE,
         observacoes TEXT,
+        remessa_id INTEGER REFERENCES remessas(id),
         criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -150,7 +183,19 @@ def init_db():
         observacoes TEXT,
         criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS pedidos_reposicao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id INTEGER NOT NULL,
+        produto_sku TEXT NOT NULL,
+        quantidade INTEGER NOT NULL,
+        observacoes TEXT,
+        status TEXT DEFAULT 'pendente',
+        criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
     """)
+
+    _migrate(conn)
 
     admin = cur.execute("SELECT id FROM usuarios WHERE email='admin@charutos.com'").fetchone()
     if not admin:

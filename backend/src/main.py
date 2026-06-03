@@ -1,9 +1,13 @@
-import sys, os
+import sys, os, uuid, shutil
 sys.path.insert(0, os.path.dirname(__file__))
 
-from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi import FastAPI, HTTPException, Depends, Body, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from typing import Optional, Any
+from pathlib import Path
+from datetime import datetime
 import sqlite3
 from database import get_db, init_db, pwd_context
 from auth import create_token, get_usuario_atual, exigir_perfil  # noqa
@@ -11,6 +15,10 @@ from auth import create_token, get_usuario_atual, exigir_perfil  # noqa
 app = FastAPI(title="Charutos Premium API")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+UPLOAD_DIR = Path(os.path.dirname(__file__)) / ".." / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 
 def rows_to_list(rows):
@@ -114,12 +122,13 @@ def criar_produto(body: dict = Body(...), usuario=Depends(get_usuario_atual)):
     conn = get_db()
     try:
         cur = conn.execute("""
-            INSERT INTO produtos (sku,descricao,marca,dimensoes,origem,unidade,preco_fob,frete_unit,impostos_unit,outros_custos,preco_venda,estoque_minimo,observacoes,link_imagem)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO produtos (sku,descricao,marca,dimensoes,origem,unidade,preco_fob,frete_unit,impostos_unit,outros_custos,preco_venda,estoque_minimo,observacoes,link_imagem,tipo_charuto,vitola,intensidade)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (body["sku"], body["descricao"], body.get("marca"), body.get("dimensoes"), body.get("origem"),
               body.get("unidade", 1), body.get("preco_fob", 0), body.get("frete_unit", 0),
               body.get("impostos_unit", 0), body.get("outros_custos", 0), body.get("preco_venda", 0),
-              body.get("estoque_minimo", 0), body.get("observacoes"), body.get("link_imagem")))
+              body.get("estoque_minimo", 0), body.get("observacoes"), body.get("link_imagem"),
+              body.get("tipo_charuto"), body.get("vitola"), body.get("intensidade")))
         conn.execute("INSERT OR IGNORE INTO estoque_inicial (produto_sku, quantidade) VALUES (?,0)", (body["sku"],))
         conn.commit()
         return {"id": cur.lastrowid}
@@ -134,12 +143,14 @@ def atualizar_produto(sku: str, body: dict = Body(...), usuario=Depends(get_usua
     conn = get_db()
     conn.execute("""
         UPDATE produtos SET descricao=?,marca=?,dimensoes=?,origem=?,unidade=?,preco_fob=?,frete_unit=?,
-        impostos_unit=?,outros_custos=?,preco_venda=?,estoque_minimo=?,observacoes=?,link_imagem=?,atualizado_em=CURRENT_TIMESTAMP
+        impostos_unit=?,outros_custos=?,preco_venda=?,estoque_minimo=?,observacoes=?,link_imagem=?,
+        tipo_charuto=?,vitola=?,intensidade=?,atualizado_em=CURRENT_TIMESTAMP
         WHERE sku=?
     """, (body.get("descricao"), body.get("marca"), body.get("dimensoes"), body.get("origem"),
           body.get("unidade", 1), body.get("preco_fob", 0), body.get("frete_unit", 0),
           body.get("impostos_unit", 0), body.get("outros_custos", 0), body.get("preco_venda", 0),
-          body.get("estoque_minimo", 0), body.get("observacoes"), body.get("link_imagem"), sku))
+          body.get("estoque_minimo", 0), body.get("observacoes"), body.get("link_imagem"),
+          body.get("tipo_charuto"), body.get("vitola"), body.get("intensidade"), sku))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -148,10 +159,31 @@ def atualizar_produto(sku: str, body: dict = Body(...), usuario=Depends(get_usua
 @app.delete("/api/produtos/{sku}")
 def deletar_produto(sku: str, usuario=Depends(get_usuario_atual)):
     conn = get_db()
+    p = conn.execute("SELECT foto_filename FROM produtos WHERE sku=?", (sku,)).fetchone()
+    if p and p["foto_filename"]:
+        foto_path = UPLOAD_DIR / p["foto_filename"]
+        if foto_path.exists():
+            foto_path.unlink()
     conn.execute("DELETE FROM produtos WHERE sku=?", (sku,))
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+@app.post("/api/produtos/{sku}/foto")
+async def upload_foto_produto(sku: str, file: UploadFile = File(...), usuario=Depends(get_usuario_atual)):
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
+        raise HTTPException(400, "Formato inválido. Use JPG, PNG ou WebP")
+    filename = f"produto_{sku}{ext}"
+    filepath = UPLOAD_DIR / filename
+    content = await file.read()
+    filepath.write_bytes(content)
+    conn = get_db()
+    conn.execute("UPDATE produtos SET foto_filename=? WHERE sku=?", (filename, sku))
+    conn.commit()
+    conn.close()
+    return {"foto_filename": filename, "foto_url": f"/uploads/{filename}"}
 
 
 # ─── CLIENTES ────────────────────────────────────────────────────────────────
@@ -161,8 +193,8 @@ def listar_clientes(busca: str = "", usuario=Depends(get_usuario_atual)):
     conn = get_db()
     if busca:
         rows = conn.execute(
-            "SELECT * FROM clientes WHERE nome LIKE ? OR telefone LIKE ? OR email LIKE ? OR cidade LIKE ? ORDER BY nome",
-            (f"%{busca}%",) * 4).fetchall()
+            "SELECT * FROM clientes WHERE nome LIKE ? OR telefone LIKE ? OR email LIKE ? OR cidade LIKE ? OR cpf_cnpj LIKE ? ORDER BY nome",
+            (f"%{busca}%",) * 5).fetchall()
     else:
         rows = conn.execute("SELECT * FROM clientes ORDER BY nome").fetchall()
     conn.close()
@@ -224,6 +256,21 @@ def deletar_cliente(cid: int, usuario=Depends(get_usuario_atual)):
     return {"ok": True}
 
 
+@app.get("/api/clientes/{cid}/portal-token")
+def get_portal_token(cid: int, usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    row = conn.execute("SELECT portal_token FROM clientes WHERE id=?", (cid,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    token = row["portal_token"]
+    if not token:
+        token = uuid.uuid4().hex
+        conn.execute("UPDATE clientes SET portal_token=? WHERE id=?", (token, cid))
+        conn.commit()
+    conn.close()
+    return {"token": token}
+
+
 # ─── ESTOQUE ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/estoque")
@@ -231,7 +278,7 @@ def listar_estoque(usuario=Depends(get_usuario_atual)):
     conn = get_db()
     rows = conn.execute("""
         SELECT
-            p.sku, p.descricao, p.marca, p.preco_venda,
+            p.sku, p.descricao, p.marca, p.preco_venda, p.foto_filename,
             (p.preco_fob+p.frete_unit+p.impostos_unit+p.outros_custos) AS custo_unit,
             p.estoque_minimo,
             COALESCE(ei.quantidade,0) AS estoque_inicial,
@@ -287,6 +334,82 @@ def listar_movimentacoes(sku: str = "", usuario=Depends(get_usuario_atual)):
         rows = conn.execute("SELECT m.*,p.descricao FROM estoque_movimentacoes m JOIN produtos p ON m.produto_sku=p.sku ORDER BY m.data DESC LIMIT 100").fetchall()
     conn.close()
     return rows_to_list(rows)
+
+
+# ─── REMESSAS (consignações agrupadas) ───────────────────────────────────────
+
+@app.get("/api/remessas")
+def listar_remessas(cliente_id: str = "", usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    where = "WHERE r.cliente_id=?" if cliente_id else ""
+    params = [int(cliente_id)] if cliente_id else []
+    rows = conn.execute(f"""
+        SELECT r.*, cl.nome AS cliente_nome,
+            COUNT(c.id) AS total_itens,
+            SUM(c.qtd_enviada) AS total_unidades,
+            SUM(c.qtd_enviada * c.preco_unit) AS valor_total,
+            SUM(c.qtd_enviada - c.qtd_vendida - c.qtd_devolvida) AS qtd_em_aberto
+        FROM remessas r
+        JOIN clientes cl ON r.cliente_id = cl.id
+        LEFT JOIN consignacoes c ON c.remessa_id = r.id
+        {where} GROUP BY r.id ORDER BY r.data_envio DESC
+    """, params).fetchall()
+    conn.close()
+    return rows_to_list(rows)
+
+
+@app.get("/api/remessas/{rid}")
+def get_remessa(rid: int, usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    remessa = conn.execute("""
+        SELECT r.*, cl.nome AS cliente_nome, cl.cpf_cnpj AS cliente_cpf_cnpj,
+               cl.telefone AS cliente_telefone, cl.endereco AS cliente_endereco,
+               cl.cidade AS cliente_cidade, cl.estado AS cliente_estado
+        FROM remessas r JOIN clientes cl ON r.cliente_id = cl.id WHERE r.id=?
+    """, (rid,)).fetchone()
+    if not remessa:
+        raise HTTPException(404)
+    itens = conn.execute("""
+        SELECT c.*, p.descricao AS produto_nome, p.marca AS produto_marca,
+               (c.qtd_enviada - c.qtd_vendida - c.qtd_devolvida) AS qtd_em_aberto
+        FROM consignacoes c JOIN produtos p ON c.produto_sku = p.sku
+        WHERE c.remessa_id = ?
+    """, (rid,)).fetchall()
+    conn.close()
+    return {**dict(remessa), "itens": rows_to_list(itens)}
+
+
+@app.post("/api/remessas")
+def criar_remessa(body: dict = Body(...), usuario=Depends(get_usuario_atual)):
+    itens = body.get("itens", [])
+    if not itens:
+        raise HTTPException(400, "Informe pelo menos um produto")
+    conn = get_db()
+    cur = conn.execute("INSERT INTO remessas (cliente_id,data_envio,observacoes) VALUES (?,?,?)",
+                       (body["cliente_id"], body["data_envio"], body.get("observacoes")))
+    rid = cur.lastrowid
+    conn.execute("UPDATE remessas SET codigo='REM-'||printf('%04d',id) WHERE id=?", (rid,))
+    for item in itens:
+        ic = conn.execute("""
+            INSERT INTO consignacoes (data_envio,cliente_id,produto_sku,qtd_enviada,preco_unit,frete,remessa_id)
+            VALUES (?,?,?,?,?,?,?)
+        """, (body["data_envio"], body["cliente_id"], item["produto_sku"],
+              item["qtd_enviada"], item.get("preco_unit", 0), item.get("frete", 0), rid))
+        conn.execute("UPDATE consignacoes SET codigo='CON-'||printf('%04d',id) WHERE id=?", (ic.lastrowid,))
+    conn.commit()
+    codigo = conn.execute("SELECT codigo FROM remessas WHERE id=?", (rid,)).fetchone()["codigo"]
+    conn.close()
+    return {"id": rid, "codigo": codigo}
+
+
+@app.delete("/api/remessas/{rid}")
+def deletar_remessa(rid: int, usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    conn.execute("DELETE FROM consignacoes WHERE remessa_id=?", (rid,))
+    conn.execute("DELETE FROM remessas WHERE id=?", (rid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 # ─── CONSIGNAÇÕES ────────────────────────────────────────────────────────────
@@ -359,6 +482,302 @@ def deletar_consignacao(cid: int, usuario=Depends(get_usuario_atual)):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+# ─── PDF ─────────────────────────────────────────────────────────────────────
+
+def _pdf_header(pdf, titulo, subtitulo=""):
+    from fpdf import FPDF
+    pdf.set_fill_color(212, 132, 30)
+    pdf.rect(0, 0, 210, 22, 'F')
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_y(6)
+    pdf.cell(0, 8, titulo, align="C", new_x="LMARGIN", new_y="NEXT")
+    if subtitulo:
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 5, subtitulo, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+
+def _pdf_linha_info(pdf, label, valor, col_label=45):
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(col_label, 6, label + ":", new_x="RIGHT", new_y="TOP")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, str(valor or "—"), new_x="LMARGIN", new_y="NEXT")
+
+
+def _pdf_tabela_header(pdf, colunas):
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Helvetica", "B", 9)
+    for i, (label, w) in enumerate(colunas):
+        last = i == len(colunas) - 1
+        pdf.cell(w, 7, label, border=1, fill=True,
+                 new_x="LMARGIN" if last else "RIGHT",
+                 new_y="NEXT" if last else "TOP")
+
+
+def _pdf_tabela_linha(pdf, valores_widths, fill=False):
+    pdf.set_font("Helvetica", "", 9)
+    if fill:
+        pdf.set_fill_color(252, 248, 240)
+    for i, (val, w) in enumerate(valores_widths):
+        last = i == len(valores_widths) - 1
+        pdf.cell(w, 6, str(val), border=1, fill=fill,
+                 new_x="LMARGIN" if last else "RIGHT",
+                 new_y="NEXT" if last else "TOP")
+
+
+def _gerar_pdf_remessa(remessa):
+    from fpdf import FPDF
+    pdf = FPDF(format="A4")
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+    w = 180
+
+    _pdf_header(pdf, "ROMANEIO DE CONSIGNAÇÃO",
+                f"Emitido em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(248, 240, 225)
+    pdf.cell(w, 7, "DADOS DO ENVIO", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    _pdf_linha_info(pdf, "Código", remessa["codigo"])
+    _pdf_linha_info(pdf, "Data de Envio", remessa["data_envio"])
+    pdf.ln(3)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(248, 240, 225)
+    pdf.cell(w, 7, "DESTINATÁRIO", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    _pdf_linha_info(pdf, "Cliente", remessa["cliente_nome"])
+    if remessa.get("cliente_cpf_cnpj"):
+        _pdf_linha_info(pdf, "CPF/CNPJ", remessa["cliente_cpf_cnpj"])
+    if remessa.get("cliente_telefone"):
+        _pdf_linha_info(pdf, "Telefone", remessa["cliente_telefone"])
+    if remessa.get("cliente_cidade"):
+        end = remessa.get("cliente_cidade", "") + (" - " + remessa["cliente_estado"] if remessa.get("cliente_estado") else "")
+        _pdf_linha_info(pdf, "Cidade", end)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(248, 240, 225)
+    pdf.cell(w, 7, "PRODUTOS CONSIGNADOS", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    colunas = [("SKU", 25), ("Produto", 75), ("Qtd.", 18), ("Preço Unit.", 31), ("Total", 31)]
+    _pdf_tabela_header(pdf, colunas)
+
+    total_geral = 0
+    for i, item in enumerate(remessa.get("itens", [])):
+        total_item = item["qtd_enviada"] * item["preco_unit"]
+        total_geral += total_item
+        vals = [
+            (item["produto_sku"], 25),
+            (item["produto_nome"][:40], 75),
+            (str(int(item["qtd_enviada"])), 18),
+            (f"R$ {item['preco_unit']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), 31),
+            (f"R$ {total_item:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), 31),
+        ]
+        _pdf_tabela_linha(pdf, vals, fill=(i % 2 == 0))
+
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 10)
+    total_fmt = f"R$ {total_geral:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    pdf.cell(w - 62, 7, "VALOR TOTAL DA REMESSA:", align="R", new_x="RIGHT", new_y="TOP")
+    pdf.set_fill_color(212, 132, 30)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(62, 7, total_fmt, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+
+    if remessa.get("observacoes"):
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 6, "Observações:", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.multi_cell(w, 5, remessa["observacoes"])
+
+    pdf.ln(15)
+    pdf.set_draw_color(100, 100, 100)
+    pdf.line(15, pdf.get_y(), 95, pdf.get_y())
+    pdf.line(110, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(80, 5, "Assinatura do Remetente", align="C", new_x="RIGHT", new_y="TOP")
+    pdf.cell(30, 5, "", new_x="RIGHT", new_y="TOP")
+    pdf.cell(85, 5, "Assinatura do Destinatário", align="C", new_x="LMARGIN", new_y="NEXT")
+
+    return bytes(pdf.output())
+
+
+def _gerar_pdf_consignacao(dados):
+    from fpdf import FPDF
+    pdf = FPDF(format="A4")
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+    w = 180
+
+    _pdf_header(pdf, "ROMANEIO DE CONSIGNAÇÃO",
+                f"Emitido em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+    _pdf_linha_info(pdf, "Código", dados["codigo"])
+    _pdf_linha_info(pdf, "Data de Envio", dados["data_envio"])
+    pdf.ln(3)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(248, 240, 225)
+    pdf.cell(w, 7, "DESTINATÁRIO", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    _pdf_linha_info(pdf, "Cliente", dados["cliente_nome"])
+    if dados.get("cliente_telefone"):
+        _pdf_linha_info(pdf, "Telefone", dados["cliente_telefone"])
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(248, 240, 225)
+    pdf.cell(w, 7, "PRODUTO", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    _pdf_linha_info(pdf, "SKU", dados["produto_sku"])
+    _pdf_linha_info(pdf, "Produto", dados["produto_nome"])
+    _pdf_linha_info(pdf, "Qtd. Enviada", str(int(dados["qtd_enviada"])) + " un.")
+    preco_fmt = f"R$ {dados['preco_unit']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    total_fmt = f"R$ {dados['valor_potencial']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    _pdf_linha_info(pdf, "Preço Unit.", preco_fmt)
+    _pdf_linha_info(pdf, "Valor Total", total_fmt)
+    if dados.get("observacoes"):
+        _pdf_linha_info(pdf, "Observações", dados["observacoes"])
+
+    pdf.ln(15)
+    pdf.set_draw_color(100, 100, 100)
+    pdf.line(15, pdf.get_y(), 95, pdf.get_y())
+    pdf.line(110, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(80, 5, "Assinatura do Remetente", align="C", new_x="RIGHT", new_y="TOP")
+    pdf.cell(30, 5, "", new_x="RIGHT", new_y="TOP")
+    pdf.cell(85, 5, "Assinatura do Destinatário", align="C", new_x="LMARGIN", new_y="NEXT")
+
+    return bytes(pdf.output())
+
+
+@app.get("/api/remessas/{rid}/pdf")
+def pdf_remessa(rid: int, usuario=Depends(get_usuario_atual)):
+    remessa = get_remessa(rid, usuario)
+    pdf_bytes = _gerar_pdf_remessa(remessa)
+    codigo = remessa.get("codigo", f"REM-{rid:04d}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={codigo}.pdf"}
+    )
+
+
+@app.get("/api/consignacoes/{cid}/pdf")
+def pdf_consignacao(cid: int, usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    row = conn.execute("""
+        SELECT c.*, cl.nome AS cliente_nome, cl.telefone AS cliente_telefone,
+            p.descricao AS produto_nome,
+            (c.qtd_enviada*c.preco_unit+c.frete) AS valor_potencial
+        FROM consignacoes c
+        JOIN clientes cl ON c.cliente_id=cl.id
+        JOIN produtos p ON c.produto_sku=p.sku
+        WHERE c.id=?
+    """, (cid,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404)
+    dados = dict(row)
+    if dados.get("remessa_id"):
+        remessa = get_remessa(dados["remessa_id"], usuario)
+        pdf_bytes = _gerar_pdf_remessa(remessa)
+        codigo = remessa.get("codigo", f"REM-{dados['remessa_id']:04d}")
+    else:
+        pdf_bytes = _gerar_pdf_consignacao(dados)
+        codigo = dados.get("codigo", f"CON-{cid:04d}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={codigo}.pdf"}
+    )
+
+
+@app.get("/api/vendas/{vid}/pdf")
+def pdf_venda(vid: int, usuario=Depends(get_usuario_atual)):
+    from fpdf import FPDF
+    conn = get_db()
+    row = conn.execute("""
+        SELECT v.*, cl.nome AS cliente_nome, cl.cpf_cnpj AS cliente_cpf_cnpj,
+               cl.telefone AS cliente_telefone, cl.cidade AS cliente_cidade, cl.estado AS cliente_estado,
+               p.descricao AS produto_nome,
+               (v.qtd_vendida*v.preco_unit+COALESCE(v.frete,0)) AS valor_total
+        FROM vendas v
+        LEFT JOIN clientes cl ON v.cliente_id=cl.id
+        JOIN produtos p ON v.produto_sku=p.sku
+        WHERE v.id=?
+    """, (vid,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404)
+    d = dict(row)
+
+    pdf = FPDF(format="A4")
+    pdf.set_margins(15, 15, 15)
+    pdf.add_page()
+    w = 180
+
+    _pdf_header(pdf, "NOTA DE VENDA",
+                f"Emitido em {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+    _pdf_linha_info(pdf, "Número", d.get("codigo"))
+    _pdf_linha_info(pdf, "Data", d.get("data_venda"))
+    _pdf_linha_info(pdf, "Forma Pgto.", d.get("forma_pagamento"))
+    pdf.ln(3)
+
+    if d.get("cliente_nome"):
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(248, 240, 225)
+        pdf.cell(w, 7, "CLIENTE", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        _pdf_linha_info(pdf, "Nome", d["cliente_nome"])
+        if d.get("cliente_cpf_cnpj"):
+            _pdf_linha_info(pdf, "CPF/CNPJ", d["cliente_cpf_cnpj"])
+        if d.get("cliente_cidade"):
+            _pdf_linha_info(pdf, "Cidade", f"{d['cliente_cidade']} - {d.get('cliente_estado','')}")
+        pdf.ln(3)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(248, 240, 225)
+    pdf.cell(w, 7, "ITEM VENDIDO", border="B", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    colunas = [("SKU", 25), ("Produto", 85), ("Qtd.", 18), ("Preço Unit.", 26), ("Total", 26)]
+    _pdf_tabela_header(pdf, colunas)
+    total_fmt = f"R$ {d['valor_total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    preco_fmt = f"R$ {d['preco_unit']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    _pdf_tabela_linha(pdf, [(d["produto_sku"], 25), (d["produto_nome"][:45], 85),
+                             (str(int(d["qtd_vendida"])), 18), (preco_fmt, 26), (total_fmt, 26)])
+
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(w - 52, 7, "TOTAL:", align="R", new_x="RIGHT", new_y="TOP")
+    pdf.set_fill_color(212, 132, 30)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(52, 7, total_fmt, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+
+    pdf_bytes = bytes(pdf.output())
+    codigo = d.get("codigo", f"VEN-{vid:04d}")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={codigo}.pdf"}
+    )
 
 
 # ─── VENDAS ──────────────────────────────────────────────────────────────────
@@ -614,6 +1033,100 @@ def deletar_conta(rid: int, usuario=Depends(get_usuario_atual)):
     return {"ok": True}
 
 
+# ─── PORTAL DO CONSIGNADO ────────────────────────────────────────────────────
+
+@app.get("/api/portal/{token}")
+def portal_info(token: str):
+    conn = get_db()
+    cliente = conn.execute("SELECT * FROM clientes WHERE portal_token=?", (token,)).fetchone()
+    if not cliente:
+        raise HTTPException(404, "Link inválido ou expirado")
+    cid = cliente["id"]
+
+    produtos = conn.execute("""
+        SELECT p.sku, p.descricao, p.marca, p.preco_venda, p.dimensoes,
+               p.tipo_charuto, p.vitola, p.intensidade, p.foto_filename,
+               p.origem, p.observacoes,
+               COALESCE(ei.quantidade,0)
+               + COALESCE((SELECT SUM(quantidade) FROM estoque_movimentacoes WHERE produto_sku=p.sku AND tipo='entrada'),0)
+               - COALESCE((SELECT SUM(qtd_vendida) FROM vendas WHERE produto_sku=p.sku AND origem='Estoque'),0)
+               - COALESCE((SELECT SUM(qtd_enviada) FROM consignacoes WHERE produto_sku=p.sku),0)
+               + COALESCE((SELECT SUM(qtd_devolvida) FROM consignacoes WHERE produto_sku=p.sku),0)
+               AS estoque_disponivel
+        FROM produtos p
+        LEFT JOIN estoque_inicial ei ON ei.produto_sku=p.sku
+        HAVING estoque_disponivel > 0
+        ORDER BY p.descricao
+    """).fetchall()
+
+    consignacoes = conn.execute("""
+        SELECT c.codigo, c.data_envio, c.qtd_enviada, c.qtd_vendida, c.qtd_devolvida,
+               (c.qtd_enviada-c.qtd_vendida-c.qtd_devolvida) AS qtd_em_aberto,
+               p.descricao AS produto_nome, p.sku AS produto_sku,
+               CAST(julianday('now')-julianday(c.data_envio) AS INTEGER) AS dias_em_aberto
+        FROM consignacoes c JOIN produtos p ON c.produto_sku=p.sku
+        WHERE c.cliente_id=? AND (c.qtd_enviada-c.qtd_vendida-c.qtd_devolvida)>0
+        ORDER BY c.data_envio DESC
+    """, (cid,)).fetchall()
+
+    pedidos = conn.execute("""
+        SELECT pr.*, p.descricao AS produto_nome
+        FROM pedidos_reposicao pr JOIN produtos p ON pr.produto_sku=p.sku
+        WHERE pr.cliente_id=? AND pr.status='pendente'
+        ORDER BY pr.criado_em DESC
+    """, (cid,)).fetchall()
+
+    conn.close()
+    return {
+        "cliente": dict(cliente),
+        "produtos": rows_to_list(produtos),
+        "consignacoes": rows_to_list(consignacoes),
+        "pedidos_pendentes": rows_to_list(pedidos),
+    }
+
+
+@app.post("/api/portal/{token}/reposicao")
+def solicitar_reposicao(token: str, body: dict = Body(...)):
+    conn = get_db()
+    cliente = conn.execute("SELECT id FROM clientes WHERE portal_token=?", (token,)).fetchone()
+    if not cliente:
+        raise HTTPException(404, "Link inválido")
+    cur = conn.execute("""
+        INSERT INTO pedidos_reposicao (cliente_id, produto_sku, quantidade, observacoes)
+        VALUES (?, ?, ?, ?)
+    """, (cliente["id"], body["produto_sku"], body["quantidade"], body.get("observacoes")))
+    conn.commit()
+    conn.close()
+    return {"id": cur.lastrowid, "mensagem": "Pedido registrado com sucesso!"}
+
+
+# ─── PEDIDOS DE REPOSIÇÃO ────────────────────────────────────────────────────
+
+@app.get("/api/pedidos-reposicao")
+def listar_pedidos_reposicao(status: str = "pendente", usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    where = "WHERE pr.status=?" if status else ""
+    params = [status] if status else []
+    rows = conn.execute(f"""
+        SELECT pr.*, cl.nome AS cliente_nome, p.descricao AS produto_nome
+        FROM pedidos_reposicao pr
+        JOIN clientes cl ON pr.cliente_id=cl.id
+        JOIN produtos p ON pr.produto_sku=p.sku
+        {where} ORDER BY pr.criado_em DESC
+    """, params).fetchall()
+    conn.close()
+    return rows_to_list(rows)
+
+
+@app.patch("/api/pedidos-reposicao/{pid}")
+def atualizar_status_pedido(pid: int, body: dict = Body(...), usuario=Depends(get_usuario_atual)):
+    conn = get_db()
+    conn.execute("UPDATE pedidos_reposicao SET status=? WHERE id=?", (body["status"], pid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 # ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
 @app.get("/api/dashboard")
@@ -637,45 +1150,66 @@ def dashboard(usuario=Depends(get_usuario_atual)):
         ) WHERE et<=estoque_minimo
     """).fetchone()["t"]
 
+    pedidos_repo = conn.execute("SELECT COUNT(*) AS t FROM pedidos_reposicao WHERE status='pendente'").fetchone()["t"]
+
+    estoque_repor = conn.execute("""
+        SELECT p.sku, p.descricao, p.estoque_minimo,
+            (COALESCE(ei.quantidade,0)+COALESCE((SELECT SUM(quantidade) FROM estoque_movimentacoes WHERE produto_sku=p.sku AND tipo='entrada'),0)
+            -COALESCE((SELECT SUM(qtd_vendida) FROM vendas WHERE produto_sku=p.sku AND origem='Estoque'),0)
+            -COALESCE((SELECT SUM(qtd_enviada) FROM consignacoes WHERE produto_sku=p.sku),0)
+            +COALESCE((SELECT SUM(qtd_devolvida) FROM consignacoes WHERE produto_sku=p.sku),0)) AS estoque_total
+        FROM produtos p LEFT JOIN estoque_inicial ei ON ei.produto_sku=p.sku
+        WHERE p.estoque_minimo>0
+        HAVING estoque_total <= p.estoque_minimo
+        ORDER BY estoque_total ASC LIMIT 10
+    """).fetchall()
+
+    consig_abertas = conn.execute("""
+        SELECT c.codigo, cl.nome AS cliente_nome, p.descricao AS produto_nome,
+            (c.qtd_enviada-c.qtd_vendida-c.qtd_devolvida) AS qtd_em_aberto,
+            (c.qtd_enviada*c.preco_unit) AS valor,
+            CAST(julianday('now')-julianday(c.data_envio) AS INTEGER) AS dias_em_aberto,
+            CASE WHEN julianday('now')-julianday(c.data_envio)>30 THEN 'CRÍTICO'
+                 WHEN julianday('now')-julianday(c.data_envio)>15 THEN 'ATENÇÃO'
+                 ELSE 'OK' END AS alerta
+        FROM consignacoes c
+        JOIN clientes cl ON c.cliente_id=cl.id
+        JOIN produtos p ON c.produto_sku=p.sku
+        WHERE (c.qtd_enviada-c.qtd_vendida-c.qtd_devolvida)>0
+        ORDER BY dias_em_aberto DESC LIMIT 10
+    """).fetchall()
+
+    contas_vencer = conn.execute("""
+        SELECT cr.codigo, cl.nome AS cliente_nome, cr.vencimento,
+            (cr.valor_bruto+cr.frete-COALESCE(cr.valor_recebido,0)) AS saldo_aberto,
+            MAX(0,CAST(julianday('now')-julianday(cr.vencimento) AS INTEGER)) AS dias_atraso,
+            CASE WHEN julianday('now')>julianday(cr.vencimento) THEN 'Em Atraso' ELSE 'A Vencer' END AS status
+        FROM contas_receber cr JOIN clientes cl ON cr.cliente_id=cl.id
+        WHERE (cr.valor_bruto+cr.frete-COALESCE(cr.valor_recebido,0))>0
+        ORDER BY cr.vencimento ASC LIMIT 10
+    """).fetchall()
+
     vendas_mes = conn.execute("""
         SELECT strftime('%Y-%m',data_venda) AS mes,
             SUM(qtd_vendida*preco_unit+COALESCE(frete,0)) AS vendas_brutas,
-            SUM(qtd_vendida*preco_unit+COALESCE(frete,0)-qtd_vendida*COALESCE((p.preco_fob+p.frete_unit+p.impostos_unit+p.outros_custos),0)) AS margem_bruta,
-            SUM(qtd_vendida) AS qtd_vendida
+            SUM(qtd_vendida*preco_unit+COALESCE(frete,0)-qtd_vendida*COALESCE((p.preco_fob+p.frete_unit+p.impostos_unit+p.outros_custos),0)) AS margem_bruta
         FROM vendas v JOIN produtos p ON v.produto_sku=p.sku
-        WHERE v.data_venda>=date('now','-12 months') GROUP BY mes ORDER BY mes
+        WHERE v.data_venda>=date('now','-6 months') GROUP BY mes ORDER BY mes
     """).fetchall()
 
-    produtos_top = conn.execute("""
-        SELECT p.descricao, p.sku, SUM(v.qtd_vendida) AS qtd, SUM(v.qtd_vendida*v.preco_unit) AS receita
-        FROM vendas v JOIN produtos p ON v.produto_sku=p.sku GROUP BY v.produto_sku ORDER BY qtd DESC LIMIT 10
-    """).fetchall()
-
-    clientes_top = conn.execute("""
-        SELECT cl.nome, cl.id, SUM(v.qtd_vendida*v.preco_unit) AS total_compras, COUNT(*) AS num_compras
-        FROM vendas v JOIN clientes cl ON v.cliente_id=cl.id GROUP BY v.cliente_id ORDER BY total_compras DESC LIMIT 10
-    """).fetchall()
-
-    status_contas = conn.execute("""
-        SELECT
-            SUM(CASE WHEN (valor_bruto+frete-COALESCE(valor_recebido,0))<=0 THEN 1 ELSE 0 END) AS liquidado,
-            SUM(CASE WHEN julianday('now')>julianday(vencimento) AND (valor_bruto+frete-COALESCE(valor_recebido,0))>0 THEN 1 ELSE 0 END) AS atrasado,
-            SUM(CASE WHEN julianday('now')<=julianday(vencimento) AND (valor_bruto+frete-COALESCE(valor_recebido,0))>0 THEN 1 ELSE 0 END) AS a_vencer
-        FROM contas_receber
-    """).fetchone()
     conn.close()
-
     return {
         "kpis": {
             "vendas_totais": vendas_totais, "skus_cadastrados": skus, "clientes_ativos": clientes,
             "consig_abertas": consig["t"], "consig_valor_aberto": consig["v"],
             "consig_criticas": consig_crit, "contas_abertas": contas["ab"],
             "contas_atrasadas": contas["at"], "alertas_estoque": alertas,
+            "pedidos_reposicao": pedidos_repo,
         },
         "vendas_mes": rows_to_list(vendas_mes),
-        "produtos_mais_vendidos": rows_to_list(produtos_top),
-        "clientes_mais_ativos": rows_to_list(clientes_top),
-        "status_contas": dict(status_contas) if status_contas else {},
+        "estoque_repor": rows_to_list(estoque_repor),
+        "consig_abertas_lista": rows_to_list(consig_abertas),
+        "contas_vencer_lista": rows_to_list(contas_vencer),
     }
 
 

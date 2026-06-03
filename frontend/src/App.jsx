@@ -13,6 +13,7 @@ import FluxoCaixa from './pages/FluxoCaixa';
 import ContasReceber from './pages/ContasReceber';
 import Relatorios from './pages/Relatorios';
 import Usuarios from './pages/Usuarios';
+import Portal from './pages/Portal';
 
 function RotaProtegida({ children }) {
   const { usuario } = useAuth();
@@ -25,6 +26,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/portal/:token" element={<Portal />} />
           <Route path="/" element={<RotaProtegida><Layout /></RotaProtegida>}>
             <Route index element={<Dashboard />} />
             <Route path="produtos" element={<Produtos />} />
