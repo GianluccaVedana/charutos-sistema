@@ -83,11 +83,6 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-gray-100">
-            <p className="text-xs text-gray-400 text-center">
-              Admin padrão: <strong>admin@charutos.com</strong> / <strong>admin123</strong>
-            </p>
-          </div>
         </div>
       </div>
     </div>
