@@ -39,6 +39,20 @@ def _migrate(conn):
             conn.execute(sql)
         except Exception:
             pass
+
+    # Corrige registros de contas_receber com valor_bruto corrompido (bug de multiplicação string*int)
+    try:
+        conn.execute("""
+            UPDATE contas_receber SET valor_bruto = (
+                SELECT CAST(v.qtd_vendida AS REAL) * CAST(v.preco_unit AS REAL)
+                FROM vendas v WHERE v.codigo = contas_receber.documento_ref
+            )
+            WHERE valor_bruto > 1000000
+            AND EXISTS (SELECT 1 FROM vendas v WHERE v.codigo = contas_receber.documento_ref)
+        """)
+    except Exception:
+        pass
+
     conn.commit()
 
 
