@@ -6,6 +6,14 @@ import Modal from '../components/Modal';
 const FORM_VAZIO = { nome: '', cpf_cnpj: '', contato: '', telefone: '', email: '', endereco: '', cidade: '', estado: '', cep: '', observacoes: '' };
 const ESTADOS = ['AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
 
+const fmtTelefone = v => {
+  const d = v.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return d.length ? `(${d}` : '';
+  if (d.length <= 6) return `(${d.slice(0,2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0,2)}) ${d.slice(2,6)}-${d.slice(6)}`;
+  return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
+};
+
 const BASE_URL = import.meta.env.VITE_API_URL || window.location.origin;
 
 export default function Clientes() {
@@ -128,7 +136,7 @@ export default function Clientes() {
             <div>
               <label className="label">Telefone / WhatsApp</label>
               <input className="input" value={form.telefone} placeholder="(00) 00000-0000"
-                onChange={e => setForm(f => ({ ...f, telefone: e.target.value }))} />
+                onChange={e => setForm(f => ({ ...f, telefone: fmtTelefone(e.target.value) }))} />
             </div>
             <div>
               <label className="label">Email</label>

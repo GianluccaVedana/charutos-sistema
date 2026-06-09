@@ -47,8 +47,10 @@ def login(body: dict = Body(...)):
     conn.close()
     if not u or not pwd_context.verify(senha, u["senha"]):
         raise HTTPException(401, "Credenciais inválidas")
-    token = create_token({"id": u["id"], "nome": u["nome"], "email": u["email"], "perfil": u["perfil"]})
-    return {"token": token, "usuario": {"id": u["id"], "nome": u["nome"], "email": u["email"], "perfil": u["perfil"]}}
+    payload = {"id": u["id"], "nome": u["nome"], "email": u["email"], "perfil": u["perfil"],
+               "cliente_id": u["cliente_id"] if "cliente_id" in u.keys() else None}
+    token = create_token(payload)
+    return {"token": token, "usuario": payload}
 
 
 @app.get("/api/auth/me")
@@ -59,7 +61,7 @@ def me(usuario=Depends(get_usuario_atual)):
 @app.get("/api/auth/usuarios")
 def listar_usuarios(usuario=Depends(exigir_perfil("admin"))):
     conn = get_db()
-    rows = conn.execute("SELECT id,nome,email,perfil,ativo,criado_em FROM usuarios").fetchall()
+    rows = conn.execute("SELECT id,nome,email,perfil,ativo,criado_em,cliente_id FROM usuarios").fetchall()
     conn.close()
     return rows_to_list(rows)
 
@@ -69,8 +71,9 @@ def criar_usuario(body: dict = Body(...), usuario=Depends(exigir_perfil("admin")
     conn = get_db()
     hashed = pwd_context.hash(body["senha"])
     try:
-        cur = conn.execute("INSERT INTO usuarios (nome,email,senha,perfil) VALUES (?,?,?,?)",
-                           (body["nome"], body["email"], hashed, body.get("perfil", "vendas")))
+        cur = conn.execute("INSERT INTO usuarios (nome,email,senha,perfil,cliente_id) VALUES (?,?,?,?,?)",
+                           (body["nome"], body["email"], hashed, body.get("perfil", "vendas"),
+                            body.get("cliente_id") or None))
         conn.commit()
         return {"id": cur.lastrowid}
     except sqlite3.IntegrityError:
@@ -82,13 +85,14 @@ def criar_usuario(body: dict = Body(...), usuario=Depends(exigir_perfil("admin")
 @app.put("/api/auth/usuarios/{uid}")
 def atualizar_usuario(uid: int, body: dict = Body(...), usuario=Depends(exigir_perfil("admin"))):
     conn = get_db()
+    cliente_id = body.get("cliente_id") or None
     if body.get("senha"):
         hashed = pwd_context.hash(body["senha"])
-        conn.execute("UPDATE usuarios SET nome=?,email=?,perfil=?,ativo=?,senha=? WHERE id=?",
-                     (body["nome"], body["email"], body["perfil"], body.get("ativo", 1), hashed, uid))
+        conn.execute("UPDATE usuarios SET nome=?,email=?,perfil=?,ativo=?,senha=?,cliente_id=? WHERE id=?",
+                     (body["nome"], body["email"], body["perfil"], body.get("ativo", 1), hashed, cliente_id, uid))
     else:
-        conn.execute("UPDATE usuarios SET nome=?,email=?,perfil=?,ativo=? WHERE id=?",
-                     (body["nome"], body["email"], body["perfil"], body.get("ativo", 1), uid))
+        conn.execute("UPDATE usuarios SET nome=?,email=?,perfil=?,ativo=?,cliente_id=? WHERE id=?",
+                     (body["nome"], body["email"], body["perfil"], body.get("ativo", 1), cliente_id, uid))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -809,23 +813,51 @@ def listar_vendas(data_inicio: str = "", data_fim: str = "", cliente_id: str = "
 @app.post("/api/vendas")
 def criar_venda(body: dict = Body(...), usuario=Depends(get_usuario_atual)):
     conn = get_db()
+    qtd = float(body["qtd_vendida"])
+    preco = float(body["preco_unit"])
+    frete = float(body.get("frete") or 0)
+    valor_total = qtd * preco + frete
+    origem = body.get("origem", "Estoque")
+    forma_pg = body.get("forma_pagamento", "À Vista")
+    cliente_id = body.get("cliente_id") or None
+
     cur = conn.execute("""
         INSERT INTO vendas (data_venda,cliente_id,produto_sku,qtd_vendida,preco_unit,frete,origem,forma_pagamento,observacoes)
         VALUES (?,?,?,?,?,?,?,?,?)
-    """, (body["data_venda"], body.get("cliente_id"), body["produto_sku"], body["qtd_vendida"],
-          body["preco_unit"], body.get("frete", 0), body.get("origem", "Estoque"),
-          body.get("forma_pagamento", "À Vista"), body.get("observacoes")))
+    """, (body["data_venda"], cliente_id, body["produto_sku"], qtd,
+          preco, frete, origem, forma_pg, body.get("observacoes")))
     lid = cur.lastrowid
-    conn.execute("UPDATE vendas SET codigo='VEN-'||printf('%04d',id) WHERE id=?", (lid,))
+    codigo_venda = f"VEN-{lid:04d}"
+    conn.execute("UPDATE vendas SET codigo=? WHERE id=?", (codigo_venda, lid))
 
-    if body.get("cliente_id"):
-        valor_bruto = body["qtd_vendida"] * body["preco_unit"]
+    # Auto-registrar entrada no Fluxo de Caixa
+    conn.execute("""
+        INSERT INTO fluxo_caixa (data,tipo,categoria,documento_ref,cliente_id,descricao,entradas,forma_pagamento)
+        VALUES (?,?,?,?,?,?,?,?)
+    """, (body["data_venda"], "Receita", "Venda", codigo_venda, cliente_id,
+          f"Venda {body.get('produto_sku','')} — {qtd:.0f} un.", valor_total, forma_pg))
+
+    # Contas a Receber para pagamentos a prazo ou consignado
+    if cliente_id:
         rec = conn.execute("""
             INSERT INTO contas_receber (cliente_id,origem,documento_ref,data_emissao,vencimento,valor_bruto,frete)
             VALUES (?,?,?,?,?,?,?)
-        """, (body["cliente_id"], body.get("origem", "Estoque"), f"VEN-{lid:04d}",
-              body["data_venda"], body["data_venda"], valor_bruto, body.get("frete", 0)))
+        """, (cliente_id, origem, codigo_venda,
+              body["data_venda"], body["data_venda"], qtd * preco, frete))
         conn.execute("UPDATE contas_receber SET codigo='REC-'||printf('%04d',id) WHERE id=?", (rec.lastrowid,))
+
+    # Reconciliar consignação: atualizar qtd_vendida na consignação correspondente
+    if origem == "Consignado" and cliente_id and body.get("produto_sku"):
+        consig = conn.execute("""
+            SELECT id FROM consignacoes
+            WHERE cliente_id=? AND produto_sku=? AND (qtd_enviada-qtd_vendida-qtd_devolvida)>0
+            ORDER BY data_envio DESC LIMIT 1
+        """, (cliente_id, body["produto_sku"])).fetchone()
+        if consig:
+            conn.execute(
+                "UPDATE consignacoes SET qtd_vendida=qtd_vendida+? WHERE id=?",
+                (qtd, consig["id"])
+            )
 
     conn.commit()
     conn.close()
@@ -1211,6 +1243,67 @@ def dashboard(usuario=Depends(get_usuario_atual)):
         "consig_abertas_lista": rows_to_list(consig_abertas),
         "contas_vencer_lista": rows_to_list(contas_vencer),
     }
+
+
+@app.get("/api/consignado/minha-area")
+def consignado_minha_area(usuario=Depends(get_usuario_atual)):
+    if usuario.get("perfil") != "consignado" or not usuario.get("cliente_id"):
+        raise HTTPException(403, "Acesso permitido apenas para usuários consignado")
+    cliente_id = usuario["cliente_id"]
+    conn = get_db()
+    cliente = conn.execute("SELECT * FROM clientes WHERE id=?", (cliente_id,)).fetchone()
+    if not cliente:
+        raise HTTPException(404, "Cliente não encontrado")
+
+    consignacoes = conn.execute("""
+        SELECT c.*, p.descricao AS produto_nome,
+            (c.qtd_enviada-c.qtd_vendida-c.qtd_devolvida) AS qtd_em_aberto,
+            CAST(julianday('now')-julianday(c.data_envio) AS INTEGER) AS dias_em_aberto
+        FROM consignacoes c JOIN produtos p ON c.produto_sku=p.sku
+        WHERE c.cliente_id=? AND (c.qtd_enviada-c.qtd_vendida-c.qtd_devolvida)>0
+        ORDER BY c.data_envio DESC
+    """, (cliente_id,)).fetchall()
+
+    produtos = conn.execute("""
+        SELECT p.*,
+            (COALESCE(ei.quantidade,0)
+             +COALESCE((SELECT SUM(quantidade) FROM estoque_movimentacoes WHERE produto_sku=p.sku AND tipo='entrada'),0)
+             -COALESCE((SELECT SUM(qtd_vendida) FROM vendas WHERE produto_sku=p.sku AND origem='Estoque'),0)
+             -COALESCE((SELECT SUM(qtd_enviada) FROM consignacoes WHERE produto_sku=p.sku),0)
+             +COALESCE((SELECT SUM(qtd_devolvida) FROM consignacoes WHERE produto_sku=p.sku),0)) AS estoque_disponivel
+        FROM produtos p LEFT JOIN estoque_inicial ei ON ei.produto_sku=p.sku
+        WHERE p.preco_venda>0
+        ORDER BY p.descricao
+    """).fetchall()
+
+    pedidos_pendentes = conn.execute("""
+        SELECT pr.*, p.descricao AS produto_nome
+        FROM pedidos_reposicao pr JOIN produtos p ON pr.produto_sku=p.sku
+        WHERE pr.cliente_id=? AND pr.status='pendente'
+        ORDER BY pr.criado_em DESC LIMIT 5
+    """, (cliente_id,)).fetchall()
+
+    conn.close()
+    return {
+        "cliente": dict(cliente),
+        "consignacoes": rows_to_list(consignacoes),
+        "produtos": rows_to_list(produtos),
+        "pedidos_pendentes": rows_to_list(pedidos_pendentes),
+    }
+
+
+@app.post("/api/consignado/reposicao")
+def consignado_reposicao(body: dict = Body(...), usuario=Depends(get_usuario_atual)):
+    if usuario.get("perfil") != "consignado" or not usuario.get("cliente_id"):
+        raise HTTPException(403, "Acesso permitido apenas para usuários consignado")
+    conn = get_db()
+    conn.execute("""
+        INSERT INTO pedidos_reposicao (cliente_id,produto_sku,quantidade,observacoes)
+        VALUES (?,?,?,?)
+    """, (usuario["cliente_id"], body["produto_sku"], body["quantidade"], body.get("observacoes")))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 @app.get("/api/health")

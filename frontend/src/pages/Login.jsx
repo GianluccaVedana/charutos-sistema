@@ -14,8 +14,8 @@ export default function Login() {
     setErro('');
     setLoading(true);
     try {
-      await login(form.email, form.senha);
-      navigate('/');
+      const u = await login(form.email, form.senha);
+      navigate(u.perfil === 'consignado' ? '/consignado' : '/');
     } catch {
       setErro('Email ou senha inválidos');
     } finally {

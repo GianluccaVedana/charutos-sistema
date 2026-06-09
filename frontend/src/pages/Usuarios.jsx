@@ -4,12 +4,13 @@ import Tabela from '../components/Tabela';
 import Modal from '../components/Modal';
 import { useAuth } from '../context/AuthContext';
 
-const FORM_VAZIO = { nome: '', email: '', senha: '', perfil: 'vendas', ativo: 1 };
+const FORM_VAZIO = { nome: '', email: '', senha: '', perfil: 'vendas', ativo: 1, cliente_id: '' };
 const PERFIS = [
   { value: 'admin', label: 'Administrador', desc: 'Acesso total ao sistema' },
   { value: 'financeiro', label: 'Financeiro', desc: 'Fluxo de caixa, contas a receber, relatórios' },
   { value: 'vendas', label: 'Vendas', desc: 'Clientes, vendas, consignações, estoque' },
   { value: 'estoque', label: 'Estoque', desc: 'Produtos e controle de estoque' },
+  { value: 'consignado', label: 'Consignado', desc: 'Acesso à área exclusiva do consignado' },
 ];
 
 export default function Usuarios() {
@@ -18,6 +19,7 @@ export default function Usuarios() {
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState(FORM_VAZIO);
   const [editando, setEditando] = useState(null);
+  const [clientes, setClientes] = useState([]);
   const { usuario: usuarioAtual } = useAuth();
 
   if (usuarioAtual?.perfil !== 'admin') {
@@ -26,8 +28,9 @@ export default function Usuarios() {
 
   const carregar = async () => {
     setLoading(true);
-    const r = await api.get('/auth/usuarios');
+    const [r, c] = await Promise.all([api.get('/auth/usuarios'), api.get('/clientes')]);
     setUsuarios(r.data);
+    setClientes(c.data);
     setLoading(false);
   };
 
@@ -45,7 +48,7 @@ export default function Usuarios() {
   };
 
   const badgePerfil = p => {
-    const cores = { admin: 'badge-red', financeiro: 'badge-blue', vendas: 'badge-green', estoque: 'badge-yellow' };
+    const cores = { admin: 'badge-red', financeiro: 'badge-blue', vendas: 'badge-green', estoque: 'badge-yellow', consignado: 'badge-purple' };
     return <span className={cores[p] || 'badge-gray'}>{p}</span>;
   };
 
@@ -103,6 +106,16 @@ export default function Usuarios() {
               {PERFIS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </div>
+          {form.perfil === 'consignado' && (
+            <div>
+              <label className="label">Cliente vinculado *</label>
+              <select className="input" value={form.cliente_id} onChange={e => setForm(f => ({ ...f, cliente_id: e.target.value }))} required>
+                <option value="">Selecione o cliente</option>
+                {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Este usuário verá apenas os dados do cliente selecionado.</p>
+            </div>
+          )}
           {editando && (
             <div className="flex items-center gap-3">
               <input type="checkbox" id="ativo" checked={form.ativo === 1} onChange={e => setForm(f => ({ ...f, ativo: e.target.checked ? 1 : 0 }))} />

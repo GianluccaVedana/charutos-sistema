@@ -32,6 +32,7 @@ def _migrate(conn):
         "ALTER TABLE produtos ADD COLUMN foto_filename TEXT",
         "ALTER TABLE clientes ADD COLUMN portal_token TEXT",
         "ALTER TABLE consignacoes ADD COLUMN remessa_id INTEGER",
+        "ALTER TABLE usuarios ADD COLUMN cliente_id INTEGER",
     ]
     for sql in migrations:
         try:
