@@ -3,15 +3,15 @@ import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const MENU_ITEMS = [
-  { path: '/', label: 'Dashboard', icon: '📊', perfis: ['admin', 'financeiro', 'vendas', 'estoque'] },
+  { path: '/', label: 'Dashboard', icon: '📊', perfis: ['admin', 'financeiro', 'estoque'] },
   { path: '/produtos', label: 'Produtos', icon: '📦', perfis: ['admin', 'estoque'] },
-  { path: '/clientes', label: 'Clientes', icon: '👥', perfis: ['admin', 'vendas'] },
+  { path: '/clientes', label: 'Clientes', icon: '👥', perfis: ['admin'] },
   { path: '/estoque', label: 'Estoque', icon: '📦', perfis: ['admin', 'estoque'] },
   { path: '/consignacoes', label: 'Consignações', icon: '📋', perfis: ['admin', 'vendas'] },
-  { path: '/vendas', label: 'Vendas', icon: '🛒', perfis: ['admin', 'vendas'] },
+  { path: '/vendas', label: 'Vendas', icon: '🛒', perfis: ['admin'] },
   { path: '/fluxo-caixa', label: 'Fluxo de Caixa', icon: '💰', perfis: ['admin', 'financeiro'] },
   { path: '/contas-receber', label: 'Contas a Receber', icon: '💳', perfis: ['admin', 'financeiro'] },
-  { path: '/relatorios', label: 'Relatórios', icon: '📈', perfis: ['admin', 'financeiro', 'vendas'] },
+  { path: '/relatorios', label: 'Relatórios', icon: '📈', perfis: ['admin', 'financeiro'] },
   { path: '/usuarios', label: 'Usuários', icon: '🔐', perfis: ['admin'] },
 ];
 

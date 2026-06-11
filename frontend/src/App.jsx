@@ -16,9 +16,11 @@ import Usuarios from './pages/Usuarios';
 import Portal from './pages/Portal';
 import AreaConsignado from './pages/AreaConsignado';
 
-function RotaProtegida({ children }) {
+function RotaProtegida({ children, perfis }) {
   const { usuario } = useAuth();
-  return usuario ? children : <Navigate to="/login" replace />;
+  if (!usuario) return <Navigate to="/login" replace />;
+  if (perfis && !perfis.includes(usuario.perfil)) return <Navigate to="/consignacoes" replace />;
+  return children;
 }
 
 export default function App() {
@@ -30,16 +32,16 @@ export default function App() {
           <Route path="/portal/:token" element={<Portal />} />
           <Route path="/consignado" element={<AreaConsignado />} />
           <Route path="/" element={<RotaProtegida><Layout /></RotaProtegida>}>
-            <Route index element={<Dashboard />} />
-            <Route path="produtos" element={<Produtos />} />
-            <Route path="clientes" element={<Clientes />} />
-            <Route path="estoque" element={<Estoque />} />
+            <Route index element={<RotaProtegida perfis={['admin','financeiro','estoque']}><Dashboard /></RotaProtegida>} />
+            <Route path="produtos" element={<RotaProtegida perfis={['admin','estoque']}><Produtos /></RotaProtegida>} />
+            <Route path="clientes" element={<RotaProtegida perfis={['admin']}><Clientes /></RotaProtegida>} />
+            <Route path="estoque" element={<RotaProtegida perfis={['admin','estoque']}><Estoque /></RotaProtegida>} />
             <Route path="consignacoes" element={<Consignacoes />} />
-            <Route path="vendas" element={<Vendas />} />
-            <Route path="fluxo-caixa" element={<FluxoCaixa />} />
-            <Route path="contas-receber" element={<ContasReceber />} />
-            <Route path="relatorios" element={<Relatorios />} />
-            <Route path="usuarios" element={<Usuarios />} />
+            <Route path="vendas" element={<RotaProtegida perfis={['admin']}><Vendas /></RotaProtegida>} />
+            <Route path="fluxo-caixa" element={<RotaProtegida perfis={['admin','financeiro']}><FluxoCaixa /></RotaProtegida>} />
+            <Route path="contas-receber" element={<RotaProtegida perfis={['admin','financeiro']}><ContasReceber /></RotaProtegida>} />
+            <Route path="relatorios" element={<RotaProtegida perfis={['admin','financeiro']}><Relatorios /></RotaProtegida>} />
+            <Route path="usuarios" element={<RotaProtegida perfis={['admin']}><Usuarios /></RotaProtegida>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

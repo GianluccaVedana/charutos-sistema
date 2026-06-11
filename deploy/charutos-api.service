@@ -1,0 +1,15 @@
+[Unit]
+Description=Charutos Premium API (FastAPI + Uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/charutos-sistema/backend
+ExecStart=/opt/charutos-venv/bin/uvicorn src.main:app --host 127.0.0.1 --port 3001 --workers 2
+Restart=always
+RestartSec=5
+Environment=PYTHONPATH=/opt/charutos-sistema/backend
+
+[Install]
+WantedBy=multi-user.target

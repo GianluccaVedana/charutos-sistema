@@ -32,6 +32,7 @@ def _migrate(conn):
         "ALTER TABLE produtos ADD COLUMN foto_filename TEXT",
         "ALTER TABLE clientes ADD COLUMN portal_token TEXT",
         "ALTER TABLE consignacoes ADD COLUMN remessa_id INTEGER",
+        "ALTER TABLE consignacoes ADD COLUMN usuario_id INTEGER",
         "ALTER TABLE usuarios ADD COLUMN cliente_id INTEGER",
     ]
     for sql in migrations:
@@ -151,6 +152,7 @@ def init_db():
         data_fechamento DATE,
         observacoes TEXT,
         remessa_id INTEGER REFERENCES remessas(id),
+        usuario_id INTEGER,
         criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 

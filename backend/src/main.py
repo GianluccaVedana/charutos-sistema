@@ -422,6 +422,8 @@ def deletar_remessa(rid: int, usuario=Depends(get_usuario_atual)):
 def listar_consignacoes(status: str = "", cliente_id: str = "", usuario=Depends(get_usuario_atual)):
     conn = get_db()
     where, params = [], []
+    if usuario["perfil"] == "vendas":
+        where.append("c.usuario_id=?"); params.append(usuario["id"])
     if cliente_id:
         where.append("c.cliente_id=?"); params.append(int(cliente_id))
     if status == "aberto":
@@ -453,10 +455,10 @@ def listar_consignacoes(status: str = "", cliente_id: str = "", usuario=Depends(
 def criar_consignacao(body: dict = Body(...), usuario=Depends(get_usuario_atual)):
     conn = get_db()
     cur = conn.execute("""
-        INSERT INTO consignacoes (data_envio,cliente_id,produto_sku,qtd_enviada,preco_unit,frete,observacoes)
-        VALUES (?,?,?,?,?,?,?)
+        INSERT INTO consignacoes (data_envio,cliente_id,produto_sku,qtd_enviada,preco_unit,frete,observacoes,usuario_id)
+        VALUES (?,?,?,?,?,?,?,?)
     """, (body["data_envio"], body["cliente_id"], body["produto_sku"], body["qtd_enviada"],
-          body.get("preco_unit", 0), body.get("frete", 0), body.get("observacoes")))
+          body.get("preco_unit", 0), body.get("frete", 0), body.get("observacoes"), usuario["id"]))
     lid = cur.lastrowid
     conn.execute("UPDATE consignacoes SET codigo='CON-'||printf('%04d',id) WHERE id=?", (lid,))
     conn.commit()
